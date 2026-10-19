@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from typing import Optional, Dict, Tuple
 import json
+import logging
 import os
 import unicodedata
 from contextlib import contextmanager
@@ -69,7 +70,7 @@ def _log(msg: str):
     try:
         QgsMessageLog.logMessage(f"DKP: {msg}", "Plugins", Qgis.MessageLevel.Info)
     except Exception:
-        pass
+        logging.getLogger(__name__).warning("DKP: %s", msg, exc_info=True)
 
 def _fold_text(text: str) -> str:
     """Case- and diacritics-insensitive form used by the layer filter ("Źródła" -> "zrodla")."""
@@ -201,8 +202,8 @@ def _field_type_info(f: QgsField) -> Tuple[str, QIcon, str]:
     if "bool" in tn or "bit" in tn:                     return ("bool",ico_b,   "Boolean")
     try:
         if f.isNumeric():                               return ("1.23", ico_real, "Numeric")
-    except Exception:
-        pass
+    except Exception as exc:
+        _log(f"Cannot inspect numeric field type: {exc}")
     return ("?", _draw_text_icon("?"), f.typeName() or "Unknown")
 
 def _coerce_to_field_type(val, qgs_field: QgsField):
@@ -337,16 +338,20 @@ class FieldCalcDockPlugin(QObject):
         try:
             if self._lt_name_conn_root and self._lt_name_conn_slot:
                 self._lt_name_conn_root.nameChanged.disconnect(self._lt_name_conn_slot)
-        except Exception:
-            pass
+        except Exception as exc:
+            _log(f"Cannot disconnect layer name signal during cleanup: {exc}")
         self._lt_name_conn_root = None
         self._lt_name_conn_slot = None
 
         if self.dock:
-            try: self.dock.visibilityChanged.disconnect(self._sync_action_with_dock)
-            except Exception: pass
-            try: self.dock.destroyed.disconnect(self._on_dock_destroyed)
-            except Exception: pass
+            try:
+                self.dock.visibilityChanged.disconnect(self._sync_action_with_dock)
+            except Exception as exc:
+                _log(f"Cannot disconnect dock visibility signal: {exc}")
+            try:
+                self.dock.destroyed.disconnect(self._on_dock_destroyed)
+            except Exception as exc:
+                _log(f"Cannot disconnect dock destruction signal: {exc}")
             # Remove the panel, otherwise it stays in the main window after disable/reload
             if not _is_deleted(self.dock):
                 self.iface.removeDockWidget(self.dock)
@@ -364,18 +369,18 @@ class FieldCalcDockPlugin(QObject):
                 # Backward-compat cleanup: remove possible old menu roots from older versions
                 try:
                     self.iface.removePluginMenu("OnGeo Tools", self.toolbar_action)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _log(f"Cannot remove legacy OnGeo Tools menu entry: {exc}")
                 try:
                     self.iface.removePluginMenu("Narzędzia OnGeo", self.toolbar_action)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _log(f"Cannot remove legacy Polish OnGeo menu entry: {exc}")
                 try:
                     self.iface.removePluginMenu("Dynamiczny Kalkulator Pól", self.toolbar_action)
-                except Exception:
-                    pass
-            except Exception:
-                pass
+                except Exception as exc:
+                    _log(f"Cannot remove legacy calculator menu entry: {exc}")
+            except Exception as exc:
+                _log(f"Cannot clean up legacy menu entries: {exc}")
             self.toolbar_action.deleteLater()
             self.toolbar_action = None
 
@@ -408,8 +413,8 @@ class FieldCalcDockPlugin(QObject):
         for sig in (p.layersAdded, p.layerWasAdded, p.layersRemoved, p.cleared):
             try:
                 sig.disconnect(self._on_layers_changed)
-            except Exception:
-                pass
+            except Exception as exc:
+                _log(f"Cannot disconnect project layer signal: {exc}")
         self._connected = False
 
     def _on_layers_changed(self, *_a, **_k):
@@ -454,8 +459,8 @@ class FieldCalcDockPlugin(QObject):
         try:
             if getattr(self, "_lt_name_conn_root", None) and getattr(self, "_lt_name_conn_slot", None):
                 self._lt_name_conn_root.nameChanged.disconnect(self._lt_name_conn_slot)
-        except Exception:
-            pass
+        except Exception as exc:
+            _log(f"Cannot disconnect layer name signal when dock closes: {exc}")
         self._lt_name_conn_root = None
         self._lt_name_conn_slot = None
         self.dock = None
@@ -782,8 +787,8 @@ class FieldCalcDock(QDockWidget):
             layer = QgsProject.instance().mapLayer(layer_id)
             if isinstance(layer, QgsVectorLayer):
                 return layer
-        except Exception:
-            pass
+        except Exception as exc:
+            _log(f"Cannot resolve saved layer: {exc}")
         return None
 
     def load_fields(self):
@@ -803,8 +808,8 @@ class FieldCalcDock(QDockWidget):
             try:
                 if f.isReadOnly():
                     continue
-            except Exception:
-                pass
+            except Exception as exc:
+                _log(f"Cannot inspect read-only state of a field: {exc}")
             badge, icon, _pretty = _field_type_info(f)
             item = QListWidgetItem(icon, f.name())
             item.setData(Qt.ItemDataRole.UserRole, (f.name(), badge, _pretty))
@@ -1044,8 +1049,8 @@ class FieldCalcDock(QDockWidget):
             if f in self.expression_inputs:
                 try:
                     self.expression_inputs[f].setText(str(t) if t is not None else "")
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _log(f"Cannot restore expression for field {f}: {exc}")
 
         if missing:
             QMessageBox.warning(
@@ -1340,8 +1345,8 @@ class FieldCalcDock(QDockWidget):
                     else:
                         try:
                             val = _coerce_to_field_type(val, fld)
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            _log(f"Cannot coerce field {field_name} value; using original value: {exc}")
 
                     old_value = ftr.attribute(idx)
                     ok = layer.changeAttributeValue(
@@ -1384,8 +1389,8 @@ class FieldCalcDock(QDockWidget):
             # USER CANCELLED: destroy edit command (no undo entry, no changes)
             try:
                 layer.destroyEditCommand()
-            except Exception:
-                pass
+            except Exception as exc:
+                _log(f"Cannot undo cancelled edit command: {exc}")
             progress.close()
             self.iface.messageBar().pushMessage(
                 self.tr("Cancelled"),
@@ -1399,8 +1404,8 @@ class FieldCalcDock(QDockWidget):
             # ERROR: destroy edit command (no undo entry, no changes)
             try:
                 layer.destroyEditCommand()
-            except Exception:
-                pass
+            except Exception as rollback_exc:
+                _log(f"Cannot undo failed edit command: {rollback_exc}")
             progress.close()
             QMessageBox.critical(
                 self,
@@ -1415,15 +1420,15 @@ class FieldCalcDock(QDockWidget):
                 if 'canvas' in locals() and canvas is not None and prev_render_flag is not None:
                     canvas.setRenderFlag(prev_render_flag)
                     canvas.refresh()
-            except Exception:
-                pass
+            except Exception as exc:
+                _log(f"Cannot restore map canvas rendering: {exc}")
 
             progress.close()
 
         try:
             layer.dataChanged.emit()  # refresh Attribute Table model (safe even if redundant)
-        except Exception:
-            pass
+        except Exception as exc:
+            _log(f"Cannot notify attribute table of changes: {exc}")
         layer.triggerRepaint()
 
         # SUCCESS MESSAGE via message bar (non-blocking)
@@ -1503,8 +1508,8 @@ class FieldCalcDock(QDockWidget):
         self._last_plugin_edit = None
         try:
             layer.dataChanged.emit()
-        except Exception:
-            pass
+        except Exception as exc:
+            _log(f"Cannot notify attribute table after undo: {exc}")
         layer.triggerRepaint()
         QMessageBox.information(
             self,
