@@ -1,24 +1,59 @@
 [general]
-name=Dynamic Field Calculator  
+name=Dynamic Field Calculator
 name[pl]=Dynamiczny Kalkulator Pól
-version=1.1.0
-qgisMinimumVersion=3.10
+version=2.0.0
+qgisMinimumVersion=3.34
+qgisMaximumVersion=4.99
 author=Michał Sikora
 homepage=https://github.com/michal-k-sikora/qgis-dynamiczny-kalkulator-pol
 tracker=https://github.com/michal-k-sikora/qgis-dynamiczny-kalkulator-pol/issues
 repository=https://github.com/michal-k-sikora/qgis-dynamiczny-kalkulator-pol
-email=michal.sikora@ongeo.pl
+email=michal.k.sikora@gmail.com
 icon=icons/icon.svg
 category=Vector
-tags=fields,attributes,expressions,calculator,qgis,atrybuty,edytor,automatyzacja,dynamiczny,kalkulator pól,ongeo,smallgis
-description=Simultaneous updating of multiple attributes in a selected vector layer using QGIS expressions, all within a single panel (PL: Aktualizacja wielu atrybutów jednocześnie w wybranej warstwie wektorowej za pomocą wyrażeń QGIS, w jednym panelu)
-about= <ul><li><b>EN: Dynamic Field Calculator</b> enables fast and simultaneous updating of multiple attributes in a selected vector layer, eliminating the need to repeatedly run the standard Field Calculator. The user selects a layer, chooses a set of fields for editing, and defines independent QGIS expressions for each of them within a single panel. The plugin also allows saving field and expression configurations, which streamlines repetitive operations in spatial data analysis and processing workflows.</li><p><li><b>PL: Dynamiczny Kalkulator Pól</b> umożliwia szybkie i jednoczesne aktualizowanie wielu atrybutów w wybranej warstwie wektorowej, z pominięciem konieczności wielokrotnego uruchamiania standardowego Kalkulatora pól. Użytkownik wskazuje warstwę, wybiera zestaw pól do edycji i w jednym panelu definiuje dla każdego z nich niezależne wyrażenia QGIS. Wtyczka umożliwia także zapamiętywanie konfiguracji pól i wyrażeń, co usprawnia wykonywanie powtarzalnych operacji w procesach analizy i przetwarzania danych przestrzennych.</li></p></ul>
+tags=fields,attributes,expressions,field calculator,vector layers,attribute editing,editor,atrybuty,kalkulator pól,edytor,dynamiczny,qgis,automatyzacja
+description=Update multiple vector layer attributes at once using QGIS expressions in a dockable panel.
+about=EN: Dynamic Field Calculator enables fast and simultaneous updating of multiple attributes in a selected vector layer, eliminating the need to repeatedly run the standard Field Calculator.
+
+ The user selects a layer, chooses a set of fields for editing, and defines independent QGIS expressions for each of them within a single panel.
+ The plugin also allows saving field and expression configurations, which streamlines repetitive operations in spatial data analysis and processing workflows.
+
+ PL: Dynamiczny Kalkulator Pól umożliwia szybkie i jednoczesne aktualizowanie wielu atrybutów w wybranej warstwie wektorowej, z pominięciem konieczności wielokrotnego uruchamiania standardowego Kalkulatora pól.
+
+ Użytkownik wskazuje warstwę, wybiera zestaw pól do edycji i w jednym panelu definiuje dla każdego z nich niezależne wyrażenia QGIS.
+ Wtyczka umożliwia także zapamiętywanie konfiguracji pól i wyrażeń, co usprawnia wykonywanie powtarzalnych operacji w procesach analizy i przetwarzania danych przestrzennych.
 experimental=False
 deprecated=False
 plugin_type=python
 license=GPL-3.0-or-later
-supportsQt6=True
 changelog=
+ [EN] Version 2.0.0
+ * Support for QGIS 4.
+ * The minimum QGIS version is now 3.34.
+ * Filter vector layers by name without changing the selected working layer.
+ * Long layer names no longer widen the panel.
+ * Improved panel resizing: adjust the width of the field list and expression area.
+ * A failed save preserves unrelated edits; undo affects only the latest plugin operation.
+ * New icon and separate toolbar.
+ * Improved handling of expressions that require all attributes.
+ * Improved layer identification in saved configurations.
+ * Improved handling of JSON fields in GeoPackage.
+ * The panel is removed correctly when the plugin is disabled or reloaded.
+
+ [PL] Wersja 2.0.0
+ * Obsługa QGIS 4.
+ * Minimalna wersja QGIS to teraz 3.34.
+ * Filtrowanie warstw wektorowych po nazwie bez zmiany wybranej warstwy roboczej.
+ * Poprawa wyświetlania nazw - długie nazwy warstw nie poszerzają panelu.
+ * Usprawniono zmianę rozmiaru panelu - można zmieniać szerokość listy pól i obszaru wyrażeń.
+ * Nieudany zapis zachowuje niezależne edycje; cofanie obejmuje tylko ostatnią operację wykonaną przez wtyczkę.
+ * Nowa ikona oraz osobny pasek narzędzi.
+ * Poprawa obsługi wyrażeń wymagających wszystkich atrybutów.
+ * Poprawa identyfikacji warstw dla zapisanych konfiguracji.
+ * Poprawa obsługi pól JSON w GeoPackage.
+ * Panel jest poprawnie usuwany po wyłączeniu lub przeładowaniu wtyczki.
+ 
+
  [EN] Version 1.1.0
  * Field sets – saving and quick switching of field configurations
  * Immediate refresh of the attribute table after applying changes

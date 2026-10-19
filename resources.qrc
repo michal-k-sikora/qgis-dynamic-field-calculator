@@ -1,6 +1,0 @@
-<RCC>
-  <qresource prefix="/plugins/Dynamiczny_kalkulator_pol">
-    <file alias="icon.svg">icons/icon.svg</file>
-    <file alias="calc_button.svg">icons/calc_button.svg</file>
-  </qresource>
-</RCC>
