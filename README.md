@@ -1,4 +1,124 @@
-## [PL]/[EN]
+## [EN]/[PL]
+
+## [EN] Dynamic Field Calculator
+
+**Dynamic Field Calculator** allows **simultaneous updating of multiple attributes** in a selected vector layer using QGIS expressions — all within a single, clear panel.
+It was designed to significantly speed up attribute data editing in GIS projects.
+
+---
+
+## WHAT'S NEW IN VERSION 2.0.0
+
+- QGIS 4 support; the minimum QGIS version is now 3.34,
+- filter vector layers by name without changing the selected working layer,
+- improved panel usability: long layer names no longer widen the panel, and the field-list and expression-area widths are adjustable,
+- safer saving and undo: a failed save preserves unrelated edits, while undo affects only the latest plugin operation,
+- improved handling of expressions that require all attributes, layer identification in saved configurations, and GeoPackage JSON fields,
+- the panel is removed correctly when the plugin is disabled or reloaded.
+
+---
+
+![Dynamic Field Calculator 2.0.0 panel](assets/DFC.png)
+
+---
+
+## FEATURES
+- Select any vector layer available in the project
+- Filter vector layers by name without changing the selected working layer
+- Edit multiple fields at the same time
+- Use different QGIS expressions for each field in a single panel
+- Open the Expression Builder directly from the plugin
+- Preview changes without saving them to the layer
+- Save or discard changes
+- Apply changes only to selected features
+- Remember the last used settings and expressions
+- Work as a dockable side panel
+
+---
+
+## INTERFACE
+
+### **Left column:**
+- Vector layer selection
+- List of all editable fields
+- “Selected features only” option
+- Buttons for adding fields and clearing the panel
+- Short help section
+
+### **Right column:**
+- Dynamically generated edit rows for selected fields
+- Field name and type
+- QGIS expression input
+- Expression Builder button
+- Remove field button
+- Action buttons:
+  - **Apply (without saving changes)**
+  - **Save changes to layer**
+  - **Undo last application**
+  - **Save configuration**
+  - **Load configuration**
+
+---
+
+## INSTALLATION
+
+### Install from ZIP:
+1. Download the latest plugin version (.zip) from the [Releases](https://github.com/michal-k-sikora/qgis-dynamic-field-calculator/releases) page.
+2. In QGIS go to Plugins → Install from ZIP.
+3. Select the downloaded file.
+4. The plugin will appear in the Dynamic Field Calculator menu and toolbar.
+
+### Manual installation:
+Copy the Dynamiczny_kalkulator_pol folder to:
+- Windows: `%APPDATA%\QGIS\QGIS3\profiles\default\python\plugins`
+- Linux/macOS: `~/.local/share/QGIS/QGIS3/profiles/default/python/plugins`
+
+For QGIS 4, use the corresponding `QGIS4` profile directory instead of `QGIS3`. The plugin files are identical for both versions.
+
+
+---
+
+## REQUIREMENTS
+- QGIS 3.34 or newer, including QGIS 4.x
+- Python (included with QGIS)
+- Qt5 / Qt6 support
+
+---
+
+## USAGE
+1. Enable the plugin in QGIS.
+2. Open Dynamic Field Calculator from its toolbar.
+3. Select a layer, choose fields, enter expressions.
+4. Click Apply to preview changes.
+5. Click Save changes to commit them. The plugin asks for confirmation because the commit includes every pending edit in the layer.
+
+**Undo last application** reverses only the most recent operation performed by the plugin. If newer edits exist, use the QGIS undo history to choose the operation manually.
+
+---
+
+## EXAMPLES
+- Bulk attribute updates
+- Geometry-based calculations
+- Copying values between fields
+- Attribute normalization
+- Calculating indicators from multiple fields
+
+---
+
+## CONFIGURATION
+The plugin stores:
+- Selected layer ID and name (the name is a fallback for older configurations)
+- Selected-features-only state
+- Field expressions
+using QGIS QSettings.
+
+---
+
+## AUTHOR
+**Michał Sikora**
+Contact: **michal.k.sikora@gmail.com**
+
+---
 
 ## [PL] Dynamiczny Kalkulator Pól
 
@@ -67,7 +187,7 @@ Panel składa się z dwóch głównych części:
 ## Instalacja
 
 ### **1. Instalacja z ZIP**
-1. Pobierz najnowszą wersję wtyczki (plik `.zip`) z zakładki *Releases* repozytorium.
+1. Pobierz najnowszą wersję wtyczki (plik `.zip`) ze strony [Releases](https://github.com/michal-k-sikora/qgis-dynamic-field-calculator/releases) repozytorium.
 2. W QGIS przejdź do:  
    **Wtyczki → Zainstaluj z pliku ZIP**
 3. Wskaż pobrany plik `.zip`.
@@ -132,125 +252,3 @@ Konfiguracja przechowywana jest w QGIS QSettings.
 
 **Michał Sikora**  
 Kontakt: **michal.k.sikora@gmail.com**
-
----
-
-## ENGLISH
-
-## [EN] Dynamic Field Calculator
-
-**Dynamic Field Calculator** allows **simultaneous updating of multiple attributes** in a selected vector layer using QGIS expressions — all within a single, clear panel.
-It was designed to significantly speed up attribute data editing in GIS projects.
-
----
-
-## WHAT'S NEW IN VERSION 2.0.0
-
-- QGIS 4 support; the minimum QGIS version is now 3.34,
-- filter vector layers by name without changing the selected working layer,
-- improved panel usability: long layer names no longer widen the panel, and the field-list and expression-area widths are adjustable,
-- safer saving and undo: a failed save preserves unrelated edits, while undo affects only the latest plugin operation,
-- improved handling of expressions that require all attributes, layer identification in saved configurations, and GeoPackage JSON fields,
-- the panel is removed correctly when the plugin is disabled or reloaded.
-
----
-
-![Dynamic Field Calculator 2.0.0 panel](assets/DFC.png)
-
----
-
-## FEATURES
-- Select any vector layer available in the project
-- Filter vector layers by name without changing the selected working layer
-- Edit multiple fields at the same time
-- Use different QGIS expressions for each field in a single panel
-- Open the Expression Builder directly from the plugin
-- Preview changes without saving them to the layer
-- Save or discard changes
-- Apply changes only to selected features
-- Remember the last used settings and expressions
-- Work as a dockable side panel
-
----
-
-## INTERFACE
-
-### **Left column:**
-- Vector layer selection
-- List of all editable fields
-- “Selected features only” option
-- Buttons for adding fields and clearing the panel
-- Short help section
-
-### **Right column:**
-- Dynamically generated edit rows for selected fields
-- Field name and type
-- QGIS expression input
-- Expression Builder button
-- Remove field button
-- Action buttons:
-  - **Apply (without saving changes)**
-  - **Save changes to layer**
-  - **Undo last application**
-  - **Save configuration**
-  - **Load configuration**
-
----
-
-## INSTALLATION
-
-### Install from ZIP:
-1. Download the latest plugin version (.zip) from the Releases tab.
-2. In QGIS go to Plugins → Install from ZIP.
-3. Select the downloaded file.
-4. The plugin will appear in the Dynamic Field Calculator menu and toolbar.
-
-### Manual installation:
-Copy the Dynamiczny_kalkulator_pol folder to:
-- Windows: `%APPDATA%\QGIS\QGIS3\profiles\default\python\plugins`
-- Linux/macOS: `~/.local/share/QGIS/QGIS3/profiles/default/python/plugins`
-
-For QGIS 4, use the corresponding `QGIS4` profile directory instead of `QGIS3`. The plugin files are identical for both versions.
-
-
----
-
-## REQUIREMENTS
-- QGIS 3.34 or newer, including QGIS 4.x
-- Python (included with QGIS)
-- Qt5 / Qt6 support
-
----
-
-## USAGE
-1. Enable the plugin in QGIS.
-2. Open Dynamic Field Calculator from its toolbar.
-3. Select a layer, choose fields, enter expressions.
-4. Click Apply to preview changes.
-5. Click Save changes to commit them. The plugin asks for confirmation because the commit includes every pending edit in the layer.
-
-**Undo last application** reverses only the most recent operation performed by the plugin. If newer edits exist, use the QGIS undo history to choose the operation manually.
-
----
-
-## EXAMPLES
-- Bulk attribute updates
-- Geometry-based calculations
-- Copying values between fields
-- Attribute normalization
-- Calculating indicators from multiple fields
-
----
-
-## CONFIGURATION
-The plugin stores:
-- Selected layer ID and name (the name is a fallback for older configurations)
-- Selected-features-only state
-- Field expressions
-using QGIS QSettings.
-
----
-
-## AUTHOR
-**Michał Sikora**
-Contact: **michal.k.sikora@gmail.com**
