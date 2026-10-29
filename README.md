@@ -129,7 +129,7 @@ Została zaprojektowana, aby znacznie przyspieszyć pracę z danymi atrybutowymi
 
 ## Nowości w wersji 2.0.1
 
-- bug fixes
+- poprawki błędów,
 - zgodność z QGIS 4 oraz minimalna wersja QGIS 3.34,
 - filtrowanie warstw wektorowych po nazwie bez zmiany wybranej warstwy roboczej,
 - wygodniejsza praca z panelem: długie nazwy warstw nie poszerzają go, a szerokość listy pól i obszaru wyrażeń można regulować,

@@ -283,15 +283,16 @@ _INTEGER_FIELD_RANGES = {
 }
 
 
-def _coerce_to_field_type(val, qgs_field: QgsField, *, provider_type=None):
+def _coerce_to_field_type(val, qgs_field: QgsField, *, provider_type=None, storage_type=None):
     """Preserve NULL and integer precision; reject invalid numeric values."""
     if val is None or (isinstance(val, QVariant) and val.isNull()):
         return None
     tname = (qgs_field.typeName() or "").lower()
-    # Width/scale constrained numeric formats may silently round or clip at
-    # commit. Until their storage rules are supported, fail before editing.
-    # Memory fields carry default display widths/scales without storage limits.
-    if provider_type != "memory" and qgs_field.isNumeric() and (
+    is_shapefile = provider_type == "ogr" and storage_type == "ESRI Shapefile"
+    # Width/scale semantics differ between drivers. DBF is handled below;
+    # retain the conservative guard for other constrained storage formats.
+    # Memory fields carry display widths/scales without storage limits.
+    if provider_type != "memory" and not is_shapefile and qgs_field.isNumeric() and (
         qgs_field.length() > 0 or qgs_field.precision() > 0
         or tname.startswith(("numeric", "decimal"))
     ):
@@ -337,12 +338,31 @@ def _coerce_to_field_type(val, qgs_field: QgsField, *, provider_type=None):
             limit = 3.4028234663852886e38 if tname in ("float32", "float", "real4") else float.fromhex("0x1.fffffffffffffp+1023")
             if not math.isfinite(number) or abs(number) > limit:
                 raise ValueError("outside real range")
-            return number
         except (ValueError, OverflowError) as exc:
             message = QCoreApplication.translate(
                 "FieldCalcDock", "Invalid or out-of-range real number for field '{field}'."
             )
             raise ValueError(message.format(field=qgs_field.name())) from exc
+        if is_shapefile:
+            # DBF real widths include the sign and decimal point; QGIS OGR
+            # removes the decimal point from QgsField.length(). Reject
+            # rounding/truncation before editing, including Real with scale 0.
+            # Integer DBF fields need no width check: GDAL auto-extends them.
+            precision = qgs_field.precision()
+            width = qgs_field.length() + (1 if precision > 0 else 0)
+            if width <= 0 or not 0 <= precision < width:
+                fits = False
+            else:
+                stored = format(number, f".{precision}f")
+                fits = (len(stored) <= width
+                        and Decimal(stored) == Decimal(str(number)))
+            if not fits:
+                message = QCoreApplication.translate(
+                    "FieldCalcDock",
+                    "Value for field '{field}' does not fit its storage width or precision."
+                )
+                raise ValueError(message.format(field=qgs_field.name()))
+        return number
     if "bool" in tname:
         if isinstance(val, str):
             return val.strip().lower() in ("1", "true", "t", "yes", "y")
@@ -1534,7 +1554,10 @@ class FieldCalcDock(QDockWidget):
                             raise RuntimeError(err.format(field=field_name, value=str(val)[:80]))
                         val = complex_val
                     else:
-                        val = _coerce_to_field_type(val, fld, provider_type=layer.providerType())
+                        val = _coerce_to_field_type(
+                            val, fld, provider_type=layer.providerType(),
+                            storage_type=layer.storageType()
+                        )
 
                     old_value = ftr.attribute(idx)
                     # Preserve provider defaults as native objects. An explicit

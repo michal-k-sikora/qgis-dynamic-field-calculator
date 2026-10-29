@@ -417,6 +417,10 @@ Szczegóły:
             <translation>Pole liczbowe ?{field}? ma nieobs?ugiwan? szeroko?? lub precyzj? zapisu.</translation>
         </message>
         <message>
+            <source>Value for field '{field}' does not fit its storage width or precision.</source>
+            <translation>Wartość pola „{field}” nie mieści się w szerokości lub precyzji zapisu.</translation>
+        </message>
+        <message>
             <source>Field {field} is virtual or read-only and cannot be updated.</source>
             <translation>Pole {field} jest wirtualne lub tylko do odczytu i nie można go aktualizować.</translation>
         </message>
