@@ -392,6 +392,38 @@ Szczegóły:
             <source>{shown} of {total}</source>
             <translation>{shown} z {total}</translation>
         </message>
+        <message>
+            <source>Invalid or out-of-range integer for field '{field}'.</source>
+            <translation>Nieprawidłowa liczba całkowita lub przekroczony zakres pola „{field}”.</translation>
+        </message>
+        <message>
+            <source>Some Field Sets are invalid and were skipped. Their stored data was preserved:
+
+{names}</source>
+            <translation>Niektóre zestawy pól są nieprawidłowe i zostały pominięte. Ich zapis zachowano:
+
+{names}</translation>
+        </message>
+        <message>
+            <source>Cannot save Field Sets because the stored data is invalid. The original data was preserved.</source>
+            <translation>Nie można zapisać zestawów pól, ponieważ zapisane dane są nieprawidłowe. Zachowano oryginalny zapis.</translation>
+        </message>
+        <message>
+            <source>Invalid or out-of-range real number for field '{field}'.</source>
+            <translation>Nieprawid?owa liczba rzeczywista lub przekroczony zakres pola ?{field}?.</translation>
+        </message>
+        <message>
+            <source>Numeric field '{field}' has unsupported storage width or precision.</source>
+            <translation>Pole liczbowe ?{field}? ma nieobs?ugiwan? szeroko?? lub precyzj? zapisu.</translation>
+        </message>
+        <message>
+            <source>Field {field} is virtual or read-only and cannot be updated.</source>
+            <translation>Pole {field} jest wirtualne lub tylko do odczytu i nie można go aktualizować.</translation>
+        </message>
+        <message>
+            <source>Cannot update field</source>
+            <translation>Nie można zaktualizować pola</translation>
+        </message>
     </context>
     <context>
         <name>FieldCalcDockPlugin</name>

@@ -2,8 +2,10 @@
 from typing import Optional, Dict, Tuple
 import json
 import logging
+import math
 import os
 import unicodedata
+from decimal import Decimal, InvalidOperation
 from contextlib import contextmanager
 
 from qgis.PyQt.QtWidgets import (
@@ -26,7 +28,7 @@ from qgis.core import (
     QgsApplication, QgsMessageLog, Qgis, QgsFeatureRequest, QgsField,
     QgsVectorDataProvider
 )
-from qgis.gui import QgsExpressionBuilderDialog, QgsFilterLineEdit
+from qgis.gui import QgsExpressionBuilderDialog, QgsFilterLineEdit, QgsDualView
 
 # ──────────────────────────────────────────────────────────────────────────────
 # ICONS – loaded from SVG files (no compiled QRC: pyrcc5 output imports PyQt5)
@@ -57,6 +59,13 @@ _EXPRESSION_FIELD_ORIGIN = (
 )
 
 # ----------------- helpers -----------------
+def _field_is_writable(layer: QgsVectorLayer, idx: int) -> bool:
+    fields = layer.fields()
+    return (idx >= 0 and fields.fieldOrigin(idx) != _EXPRESSION_FIELD_ORIGIN
+            and not fields[idx].isReadOnly()
+            and not layer.editFormConfig().readOnly(idx))
+
+
 def _is_deleted(obj) -> bool:
     try:
         if obj is None:
@@ -72,10 +81,70 @@ def _log(msg: str):
     except Exception:
         logging.getLogger(__name__).warning("DKP: %s", msg, exc_info=True)
 
+
+def _typed_null_for_undo(field: QgsField) -> QVariant:
+    """Keep NULL distinct from an unspecified old value in QGIS undo commands.
+
+    Qt 6 exposes NULL attributes as None. Passing None as oldValue creates an
+    invalid QVariant, so each undo command fetches its old value from the
+    provider again. A valid, typed NULL avoids those per-value reads.
+    """
+    type_id = getattr(field.type(), "value", field.type())
+    if hasattr(QVariant, "Type"):
+        value = QVariant(QVariant.Type(type_id))
+    else:
+        value = QVariant()
+        # Qt 6 convert() returns False for invalid input but creates a typed
+        # NULL. Check the resulting variant, not the conversion return value.
+        value.convert(QMetaType(type_id))
+    if not value.isValid() or not value.isNull():
+        raise RuntimeError(f"Cannot create a typed NULL for field {field.name()}")
+    return value
+
 def _fold_text(text: str) -> str:
     """Case- and diacritics-insensitive form used by the layer filter ("Źródła" -> "zrodla")."""
     text = unicodedata.normalize("NFKD", text.casefold().replace("ł", "l"))
     return "".join(c for c in text if not unicodedata.combining(c))
+
+
+@contextmanager
+def _defer_attribute_table_updates(layer):
+    """Notify table views once after undoing DKP's attribute-only command.
+
+    Layer signals remain active and each cache still receives new values.
+    Cache-to-view notifications are deferred, avoiding per-feature provider
+    reads by table models. Invalidate caches once afterwards so QGIS reloads
+    the models through its existing connections. This must not
+    wrap commands which add/remove features or change the schema.
+    """
+    caches = []
+    seen = set()
+    seen_caches = set()
+    try:
+        for widget in QgsApplication.allWidgets():
+            # Widgets created by the C++ application may have a generic Qt
+            # Python wrapper. Check the native type before casting it.
+            if not widget.inherits("QgsDualView"):
+                continue
+            model = sip.cast(widget, QgsDualView).masterModel()
+            if model is None or id(model) in seen or _is_deleted(model):
+                continue
+            seen.add(id(model))
+            if model.layer() == layer:
+                cache = model.layerCache()
+                if id(cache) not in seen_caches:
+                    seen_caches.add(id(cache))
+                    caches.append((cache, cache.blockSignals(True)))
+        yield
+    finally:
+        for cache, blocked in caches:
+            if not _is_deleted(cache):
+                cache.blockSignals(blocked)
+        if not _is_deleted(layer):
+            try:
+                layer.dataChanged.emit()
+            except RuntimeError as exc:
+                _log(f"Cannot notify attribute table after undo: {exc}")
 
 def _draw_text_icon(txt: str) -> QIcon:
     pm = QPixmap(24, 24); pm.fill(QColor(245,245,247))
@@ -206,30 +275,120 @@ def _field_type_info(f: QgsField) -> Tuple[str, QIcon, str]:
         _log(f"Cannot inspect numeric field type: {exc}")
     return ("?", _draw_text_icon("?"), f.typeName() or "Unknown")
 
-def _coerce_to_field_type(val, qgs_field: QgsField):
-    """Gently cast the expression result to the field data type."""
-    try:
-        tname = (qgs_field.typeName() or "").lower()
-        if qgs_field.isNumeric():
-            if "int" in tname:
-                if val in ("", None): return None
-                return int(float(val))
-            else:
-                if val in ("", None): return None
-                return float(val)
-        if "bool" in tname:
-            if isinstance(val, str):
-                return val.strip().lower() in ("1","true","t","yes","y")
-            return bool(val)
-        if val is None:
+_INTEGER_FIELD_RANGES = {
+    QMetaType.Type.Int: (-(2 ** 31), 2 ** 31 - 1),
+    QMetaType.Type.UInt: (0, 2 ** 32 - 1),
+    QMetaType.Type.LongLong: (-(2 ** 63), 2 ** 63 - 1),
+    QMetaType.Type.ULongLong: (0, 2 ** 64 - 1),
+}
+
+
+def _coerce_to_field_type(val, qgs_field: QgsField, *, provider_type=None):
+    """Preserve NULL and integer precision; reject invalid numeric values."""
+    if val is None or (isinstance(val, QVariant) and val.isNull()):
+        return None
+    tname = (qgs_field.typeName() or "").lower()
+    # Width/scale constrained numeric formats may silently round or clip at
+    # commit. Until their storage rules are supported, fail before editing.
+    # Memory fields carry default display widths/scales without storage limits.
+    if provider_type != "memory" and qgs_field.isNumeric() and (
+        qgs_field.length() > 0 or qgs_field.precision() > 0
+        or tname.startswith(("numeric", "decimal"))
+    ):
+        message = QCoreApplication.translate(
+            "FieldCalcDock", "Numeric field '{field}' has unsupported storage width or precision."
+        )
+        raise ValueError(message.format(field=qgs_field.name()))
+    bounds = _INTEGER_FIELD_RANGES.get(qgs_field.type())
+    # OGR exposes SMALLINT as Qt Int, and FLOAT as Qt Double.
+    provider_bounds = {
+        "int16": (-(2 ** 15), 2 ** 15 - 1),
+        "smallint": (-(2 ** 15), 2 ** 15 - 1),
+        "int2": (-(2 ** 15), 2 ** 15 - 1),
+    }.get(tname)
+    if bounds is not None and provider_bounds is not None:
+        bounds = (max(bounds[0], provider_bounds[0]), min(bounds[1], provider_bounds[1]))
+    if bounds is not None:
+        if val == "":
             return None
-        if isinstance(val, (QDate, QTime, QDateTime)):
-            # str(QDateTime) is a Python/PyQt object representation, not a
-            # date value. Let QGIS convert temporal results for this field.
-            return qgs_field.convertCompatible(val)
-        return str(val) if not isinstance(val, (str, bytes)) else val
-    except Exception:
-        return val
+        try:
+            # A float already has an exact binary value. Its shortest decimal
+            # representation need not denote that same integer (notably int64).
+            number = val if isinstance(val, (int, float)) else Decimal(str(val))
+            finite = (math.isfinite(number) if isinstance(number, float)
+                      else isinstance(number, int) or number.is_finite())
+            if not finite or not bounds[0] <= number <= bounds[1]:
+                raise ValueError("outside integer range")
+            # Retain truncation towards zero without a float round-trip.
+            return int(number)
+        except (InvalidOperation, ValueError, OverflowError) as exc:
+            message = QCoreApplication.translate(
+                "FieldCalcDock",
+                "Invalid or out-of-range integer for field '{field}'."
+            )
+            raise ValueError(message.format(field=qgs_field.name())) from exc
+    if qgs_field.isNumeric():
+        if val == "":
+            return None
+        try:
+            number = float(val)
+            # Reject nonfinite results consistently, including finite text
+            # overflowing Double. Float32 providers have a narrower range.
+            limit = 3.4028234663852886e38 if tname in ("float32", "float", "real4") else float.fromhex("0x1.fffffffffffffp+1023")
+            if not math.isfinite(number) or abs(number) > limit:
+                raise ValueError("outside real range")
+            return number
+        except (ValueError, OverflowError) as exc:
+            message = QCoreApplication.translate(
+                "FieldCalcDock", "Invalid or out-of-range real number for field '{field}'."
+            )
+            raise ValueError(message.format(field=qgs_field.name())) from exc
+    if "bool" in tname:
+        if isinstance(val, str):
+            return val.strip().lower() in ("1", "true", "t", "yes", "y")
+        return bool(val)
+    if isinstance(val, (QDate, QTime, QDateTime)):
+        return qgs_field.convertCompatible(val)
+    return str(val) if not isinstance(val, (str, bytes)) else val
+
+
+def _normalize_panel_state(payload, *, fieldset=False):
+    """Validate stored UI data completely before any widget is changed."""
+    if not isinstance(payload, dict):
+        raise ValueError("configuration must be an object")
+    expressions = payload.get("expressions")
+    if expressions is None:
+        expressions = {}
+    if not isinstance(expressions, dict):
+        raise ValueError("expressions must be an object")
+    normalized = {}
+    for name, text in expressions.items():
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("invalid field name")
+        if text is not None and not isinstance(text, str):
+            raise ValueError("expression must be text")
+        normalized[name] = text if text is not None else ""
+    result = {"expressions": normalized}
+    for key in ("layer_id", "layer_name"):
+        value = payload.get(key)
+        if value is not None and not isinstance(value, str):
+            raise ValueError("invalid layer reference")
+        result[key] = value or ""
+    selection_key = "selected_only" if fieldset else "only_selected"
+    selected = payload.get(selection_key, False)
+    if not isinstance(selected, bool):
+        raise ValueError("selection flag must be boolean")
+    result[selection_key] = selected
+    if fieldset:
+        fields = payload.get("fields")
+        if fields is None:
+            fields = []
+        if not isinstance(fields, list) or any(
+            not isinstance(name, str) or not name.strip() for name in fields
+        ):
+            raise ValueError("fields must be a list of field names")
+        result["fields"] = list(dict.fromkeys(fields))
+    return result
 
 @contextmanager
 def block_layer_signals(layer: QgsVectorLayer):
@@ -354,6 +513,7 @@ class FieldCalcDockPlugin(QObject):
                 _log(f"Cannot disconnect dock destruction signal: {exc}")
             # Remove the panel, otherwise it stays in the main window after disable/reload
             if not _is_deleted(self.dock):
+                self.dock.disconnect_history_refresh()
                 self.iface.removeDockWidget(self.dock)
                 self.dock.deleteLater()
             self.dock = None
@@ -648,7 +808,7 @@ class FieldCalcDock(QDockWidget):
         self.columns_splitter.splitterMoved.connect(self._save_splitter_state)
         self.main_layout.addWidget(self.columns_splitter)
 
-        self.footer = QLabel("© 2025 Michał Sikora", self.main_widget)
+        self.footer = QLabel("©2025 Michał Sikora", self.main_widget)
         self.footer.setObjectName("CreditsFooter")
         self.footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.footer.setStyleSheet(
@@ -660,6 +820,8 @@ class FieldCalcDock(QDockWidget):
         self.expression_inputs: Dict[str, QLineEdit] = {}
         self.expression_rows: Dict[str, QWidget] = {}
         self._last_plugin_edit: Optional[Dict] = None
+        self._history_refresh = {}
+        self._guarded_undo = False
 
         # SIGNALS
         self.add_field_button.clicked.connect(self.prepare_expression_inputs)
@@ -801,15 +963,8 @@ class FieldCalcDock(QDockWidget):
         fields = layer.fields()
         for f in fields:
             idx = fields.indexFromName(f.name())
-            if idx < 0:
+            if not _field_is_writable(layer, idx):
                 continue
-            if fields.fieldOrigin(idx) == _EXPRESSION_FIELD_ORIGIN:
-                continue
-            try:
-                if f.isReadOnly():
-                    continue
-            except Exception as exc:
-                _log(f"Cannot inspect read-only state of a field: {exc}")
             badge, icon, _pretty = _field_type_info(f)
             item = QListWidgetItem(icon, f.name())
             item.setData(Qt.ItemDataRole.UserRole, (f.name(), badge, _pretty))
@@ -917,54 +1072,74 @@ class FieldCalcDock(QDockWidget):
         try:
             raw = self._settings.value(KEY_FIELDSETS_ROOT, "") or ""
         except Exception:
-            raw = ""
+            return {"version": 1, "items": {}, "_read_error": True}
         if not raw:
             return {"version": 1, "items": {}}
 
         try:
             data = json.loads(raw)
-        except Exception:
+            if not isinstance(data, dict):
+                raise ValueError("Field Sets must be an object")
+            items = data.get("items", {})
+            if not isinstance(items, dict):
+                raise ValueError("items must be an object")
+        except (TypeError, ValueError):
             QMessageBox.warning(
                 self,
                 self.tr("Data error"),
                 self.tr("Cannot read Field Sets data from settings. The stored data may be corrupted.")
             )
-            return {"version": 1, "items": {}}
-
-        if not isinstance(data, dict):
-            return {"version": 1, "items": {}}
+            return {"version": 1, "items": {}, "_read_error": True}
 
         version = data.get("version", 1)
-        items = data.get("items", {})
-        if not isinstance(items, dict):
-            items = {}
-
-        # Normalize items payloads
+        # Keep unreadable items when saving or deleting a different set.
         norm_items = {}
+        invalid_items = {}
         for name, payload in items.items():
-            if not isinstance(name, str) or not name.strip():
-                continue
-            if not isinstance(payload, dict):
-                continue
-            norm_items[name] = {
-                "layer_id": str(payload.get("layer_id", "") or ""),
-                "layer_name": str(payload.get("layer_name", "") or ""),
-                "selected_only": bool(payload.get("selected_only", False)),
-                "fields": list(payload.get("fields", []) or []),
-                "expressions": dict(payload.get("expressions", {}) or {}),
-            }
-        return {"version": int(version) if str(version).isdigit() else 1, "items": norm_items}
+            try:
+                if not isinstance(name, str) or not name.strip():
+                    raise ValueError("invalid set name")
+                norm_items[name] = _normalize_panel_state(payload, fieldset=True)
+            except ValueError:
+                invalid_items[name] = payload
+        if invalid_items:
+            QMessageBox.warning(
+                self, self.tr("Data error"),
+                self.tr(
+                    "Some Field Sets are invalid and were skipped. "
+                    "Their stored data was preserved:\n\n{names}"
+                ).format(names="\n".join(invalid_items))
+            )
+        return {
+            "version": int(version) if str(version).isdigit() else 1,
+            "items": norm_items,
+            "_invalid_items": invalid_items,
+        }
 
     def _fieldsets_save_to_settings(self, data: Dict) -> bool:
         """Save Field Sets JSON to QgsSettings. Returns True on success."""
         try:
             if not isinstance(data, dict):
                 return False
+            if data.get("_read_error"):
+                QMessageBox.warning(
+                    self, self.tr("Data error"),
+                    self.tr(
+                        "Cannot save Field Sets because the stored data is "
+                        "invalid. The original data was preserved."
+                    )
+                )
+                return False
             version = data.get("version", 1)
             items = data.get("items", {})
             if not isinstance(items, dict):
                 items = {}
-            payload = {"version": int(version) if str(version).isdigit() else 1, "items": items}
+            stored_items = dict(data.get("_invalid_items", {}))
+            stored_items.update(items)
+            payload = {
+                "version": int(version) if str(version).isdigit() else 1,
+                "items": stored_items,
+            }
             self._settings.setValue(KEY_FIELDSETS_ROOT, json.dumps(payload))
             return True
         except Exception:
@@ -1016,13 +1191,21 @@ class FieldCalcDock(QDockWidget):
 
     def _apply_fieldset_state_to_panel(self, state: Dict):
         """Apply Field Set configuration to UI (no editing, no apply/commit)."""
-        if not isinstance(state, dict):
+        try:
+            state = _normalize_panel_state(state, fieldset=True)
+        except ValueError:
             QMessageBox.warning(self, self.tr("Data error"), self.tr("Invalid Field Set payload."))
             return
 
         layer = self.current_layer()
         if not layer:
             QMessageBox.warning(self, self.tr("No layer"), self.tr("Choose a layer first."))
+            return
+
+        wanted_fields = list(state.get("fields", []) or [])
+        # Missing fields retain the portable Field Set contract (warn and skip).
+        # Existing but unwritable fields must not silently enter the panel.
+        if not self._validate_writable_fields(layer, wanted_fields, skip_missing=True):
             return
 
         # Apply stored panel state to the CURRENT layer only (Field Sets are not layer-bound).
@@ -1095,7 +1278,7 @@ class FieldCalcDock(QDockWidget):
         data = self._fieldsets_load_from_settings()
         items = data.get("items", {}) or {}
 
-        if name in items:
+        if name in items or name in data.get("_invalid_items", {}):
             res = QMessageBox.question(
                 self,
                 self.tr("Overwrite Field Set"),
@@ -1175,6 +1358,9 @@ class FieldCalcDock(QDockWidget):
             return
         if not self.expression_inputs:
             QMessageBox.information(self, self.tr("No fields"), self.tr("Add at least one field to edit."))
+            return
+
+        if not self._validate_writable_fields(layer, self.expression_inputs):
             return
 
         # Provider capabilities
@@ -1292,6 +1478,7 @@ class FieldCalcDock(QDockWidget):
         processed = 0
         update_interval = 100  # Update UI every 100 features (balance between responsiveness and performance)
 
+        command_started = False
         try:
             # NOTE: We intentionally do NOT block layer/edit-buffer signals here.
             # Blocking signals prevents the Attribute Table model from receiving change notifications,
@@ -1314,8 +1501,12 @@ class FieldCalcDock(QDockWidget):
             undo_stack = layer.undoStack()
             undo_index_before = undo_stack.index()
             command_text = self.tr("DKP: apply expressions (preview)")
+            # Apply directly using native QGIS history behavior. Starting a new
+            # command discards an existing Redo branch, including on failure.
+            # destroyEditCommand restores this operation's attribute changes.
             layer.beginEditCommand(command_text)
-
+            command_started = True
+            null_old_values = {}
             for ftr in layer.getFeatures(req):
                 # CHECK CANCEL every iteration (fast operation)
                 if progress.wasCanceled():
@@ -1343,24 +1534,23 @@ class FieldCalcDock(QDockWidget):
                             raise RuntimeError(err.format(field=field_name, value=str(val)[:80]))
                         val = complex_val
                     else:
-                        try:
-                            val = _coerce_to_field_type(val, fld)
-                        except Exception as exc:
-                            _log(f"Cannot coerce field {field_name} value; using original value: {exc}")
+                        val = _coerce_to_field_type(val, fld, provider_type=layer.providerType())
 
                     old_value = ftr.attribute(idx)
-                    ok = layer.changeAttributeValue(
-                        ftr.id(),
-                        idx,
-                        val,
-                        old_value,
-                    )
-                    if not ok:
+                    # Preserve provider defaults as native objects. An explicit
+                    # typed NULL avoids provider reads when QGIS undoes a NULL.
+                    if old_value is None or (isinstance(old_value, QVariant) and old_value.isNull()):
+                        if idx not in null_old_values:
+                            null_old_values[idx] = _typed_null_for_undo(fld)
+                        old_value = null_old_values[idx]
+                    if not layer.changeAttributeValue(ftr.id(), idx, val, old_value):
                         raise RuntimeError(
                             self.tr("Failed to change {field} for feature FID={fid}").format(
                                 field=field_name, fid=ftr.id()
                             )
                         )
+                    if progress.wasCanceled():
+                        raise UserWarning(self.tr("Operation cancelled by user"))
                     total_changes += 1
 
                 processed += 1
@@ -1373,22 +1563,33 @@ class FieldCalcDock(QDockWidget):
             # Final progress update
             progress.setValue(total_features)
 
-            # SUCCESS: commit the edit command to undo stack
+            QgsApplication.processEvents()
+            if progress.wasCanceled():
+                raise UserWarning(self.tr("Operation cancelled by user"))
+
+            # Honor cancellation even after the last attribute notification.
+            if progress.wasCanceled():
+                raise UserWarning(self.tr("Operation cancelled by user"))
             layer.endEditCommand()
+            command_started = False
             undo_index_after = undo_stack.index()
             if undo_index_after == undo_index_before + 1:
                 self._last_plugin_edit = {
                     "layer_id": layer.id(),
                     "before_index": undo_index_before,
                     "after_index": undo_index_after,
+                    "command": undo_stack.command(undo_index_before),
                 }
+                self._track_history_refresh(layer, undo_index_before)
             else:
                 self._last_plugin_edit = None
 
         except UserWarning as e:
             # USER CANCELLED: destroy edit command (no undo entry, no changes)
             try:
-                layer.destroyEditCommand()
+                if command_started:
+                    with _defer_attribute_table_updates(layer):
+                        layer.destroyEditCommand()
             except Exception as exc:
                 _log(f"Cannot undo cancelled edit command: {exc}")
             progress.close()
@@ -1403,7 +1604,9 @@ class FieldCalcDock(QDockWidget):
         except Exception as e:
             # ERROR: destroy edit command (no undo entry, no changes)
             try:
-                layer.destroyEditCommand()
+                if command_started:
+                    with _defer_attribute_table_updates(layer):
+                        layer.destroyEditCommand()
             except Exception as rollback_exc:
                 _log(f"Cannot undo failed edit command: {rollback_exc}")
             progress.close()
@@ -1439,6 +1642,43 @@ class FieldCalcDock(QDockWidget):
             duration=8
         )
 
+
+    def _track_history_refresh(self, layer, command_index):
+        """Refresh sort/filter caches after native Undo/Redo of our commands."""
+        key = layer.id()
+        stack = layer.undoStack()
+        state = self._history_refresh.get(key)
+        if state is None or _is_deleted(state['stack']) or state['stack'] is not stack:
+            state = {'layer': layer, 'stack': stack, 'index': stack.index(), 'commands': {}}
+            self._history_refresh[key] = state
+            stack.indexChanged.connect(self._on_history_index_changed)
+        state['commands'][command_index] = stack.command(command_index)
+
+    @pyqtSlot(int)
+    def _on_history_index_changed(self, index):
+        stack = self.sender()
+        for state in self._history_refresh.values():
+            if state['stack'] is not stack:
+                continue
+            previous = state['index']
+            state['index'] = index
+            commands = state['commands']
+            # A replaced branch/commit invalidates command wrappers. Never infer
+            # ownership from an index or translated command text alone.
+            for position, command in list(commands.items()):
+                if (_is_deleted(command) or position >= stack.count()
+                        or stack.command(position) is not command):
+                    del commands[position]
+            if (not self._guarded_undo and not _is_deleted(state['layer'])
+                    and any(min(previous, index) <= pos < max(previous, index) for pos in commands)):
+                state['layer'].dataChanged.emit()
+            break
+
+    def disconnect_history_refresh(self):
+        for state in self._history_refresh.values():
+            if not _is_deleted(state['stack']):
+                state['stack'].indexChanged.disconnect(self._on_history_index_changed)
+        self._history_refresh.clear()
 
     def commit_changes(self):
         layer = self.current_layer()
@@ -1492,6 +1732,8 @@ class FieldCalcDock(QDockWidget):
             and undo_stack.canUndo()
             and undo_stack.index() == state.get("after_index")
             and state.get("after_index") == state.get("before_index", -1) + 1
+            and not _is_deleted(state.get("command"))
+            and undo_stack.command(state["before_index"]) is state["command"]
         )
         if not can_undo_safely:
             QMessageBox.warning(
@@ -1504,12 +1746,13 @@ class FieldCalcDock(QDockWidget):
             )
             return
 
-        undo_stack.undo()
-        self._last_plugin_edit = None
+        self._guarded_undo = True
         try:
-            layer.dataChanged.emit()
-        except Exception as exc:
-            _log(f"Cannot notify attribute table after undo: {exc}")
+            with _defer_attribute_table_updates(layer):
+                undo_stack.undo()
+        finally:
+            self._guarded_undo = False
+        self._last_plugin_edit = None
         layer.triggerRepaint()
         QMessageBox.information(
             self,
@@ -1530,14 +1773,30 @@ class FieldCalcDock(QDockWidget):
         self._settings.setValue(KEY_LAST, json.dumps(data))
         QMessageBox.information(self, self.tr("Saved"), self.tr("Current settings were saved as the last configuration."))
 
+    def _validate_writable_fields(self, layer, names, skip_missing=False):
+        fields = layer.fields()
+        for name in names:
+            idx = fields.indexFromName(name)
+            if idx < 0:
+                if skip_missing:
+                    continue
+                message = self.tr("Field {field} is no longer available.").format(field=name)
+            elif not _field_is_writable(layer, idx):
+                message = self.tr("Field {field} is virtual or read-only and cannot be updated.").format(field=name)
+            else:
+                continue
+            QMessageBox.warning(self, self.tr("Cannot update field"), message)
+            return False
+        return True
+
     def load_last_settings(self):
         raw = self._settings.value(KEY_LAST, "")
         if not raw:
             QMessageBox.information(self, self.tr("No data"), self.tr("No saved settings found yet."))
             return
         try:
-            data = json.loads(raw)
-        except Exception:
+            data = _normalize_panel_state(json.loads(raw))
+        except (TypeError, ValueError):
             QMessageBox.warning(self, self.tr("Data error"), self.tr("Cannot read the saved settings."))
             return
 
@@ -1580,6 +1839,11 @@ class FieldCalcDock(QDockWidget):
                     self.tr("The layer saved with this configuration is not available in the project.")
                 )
                 return
+
+        target_layer = (QgsProject.instance().mapLayer(self.layer_combo.itemData(target_index))
+                        if target_index >= 0 else self.current_layer())
+        if target_layer is None or not self._validate_writable_fields(target_layer, data.get("expressions", {})):
+            return
 
         self.reset_ui()
         if target_index >= 0:

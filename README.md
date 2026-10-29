@@ -7,8 +7,9 @@ It was designed to significantly speed up attribute data editing in GIS projects
 
 ---
 
-## WHAT'S NEW IN VERSION 2.0.0
+## WHAT'S NEW IN VERSION 2.0.1
 
+- bug fixes
 - QGIS 4 support; the minimum QGIS version is now 3.34,
 - filter vector layers by name without changing the selected working layer,
 - improved panel usability: long layer names no longer widen the panel, and the field-list and expression-area widths are adjustable,
@@ -18,7 +19,7 @@ It was designed to significantly speed up attribute data editing in GIS projects
 
 ---
 
-![Dynamic Field Calculator 2.0.0 panel](assets/DFC.png)
+![Dynamic Field Calculator 2.0.1 panel](assets/DFC.png)
 
 ---
 
@@ -126,8 +127,9 @@ Contact: **michal.k.sikora@gmail.com**
 Została zaprojektowana, aby znacznie przyspieszyć pracę z danymi atrybutowymi w projektach GIS.
 ---
 
-## Nowości w wersji 2.0.0
+## Nowości w wersji 2.0.1
 
+- bug fixes
 - zgodność z QGIS 4 oraz minimalna wersja QGIS 3.34,
 - filtrowanie warstw wektorowych po nazwie bez zmiany wybranej warstwy roboczej,
 - wygodniejsza praca z panelem: długie nazwy warstw nie poszerzają go, a szerokość listy pól i obszaru wyrażeń można regulować,
@@ -137,7 +139,7 @@ Została zaprojektowana, aby znacznie przyspieszyć pracę z danymi atrybutowymi
 
 ---
 
-![Panel Dynamicznego Kalkulatora Pól 2.0.0](assets/DKP.png)
+![Panel Dynamicznego Kalkulatora Pól 2.0.1](assets/DKP.png)
 
 ---
 

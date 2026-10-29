@@ -1,7 +1,7 @@
 [general]
 name=Dynamic Field Calculator
 name[pl]=Dynamiczny Kalkulator Pól
-version=2.0.0
+version=2.0.1
 qgisMinimumVersion=3.34
 qgisMaximumVersion=4.99
 author=Michał Sikora
@@ -27,6 +27,14 @@ deprecated=False
 plugin_type=python
 license=GPL-3.0-or-later
 changelog=
+ [EN] Version 2.0.1
+ * Bug fixes.
+ * Faster undo of changes.
+
+ [PL] Wersja 2.0.1
+ * Poprawki błędów.
+ * Szybsze cofanie zmian.
+
  [EN] Version 2.0.0
  * Support for QGIS 4.
  * The minimum QGIS version is now 3.34.
